@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MySQL Playground Studio — Browser SQL IDE</title>
+<meta name="description" content="Real SQL in the browser. Write MySQL, see schema live, connect app code. SQLite WASM + MySQL compatibility layer.">
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+<!-- CodeMirror 5 -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/material-darker.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/eclipse.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/hint/show-hint.min.css">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to main content</a>
+
+  <!-- Header -->
+  <header class="app-header" role="banner">
+    <div class="header-left">
+      <div class="logo">
+        <span class="logo-icon" aria-hidden="true">◉</span>
+        <div>
+          <h1 class="logo-title">MySQL Playground Studio</h1>
+          <p class="logo-subtitle">Real SQL • Live Schema • App Code • In Your Browser</p>
+        </div>
+      </div>
+      <span class="badge" id="engineBadge" title="SQL engine status"><span class="dot dot-wait"></span> Loading engine…</span>
+    </div>
+    <div class="header-center">
+      <div class="header-stats">
+        <span id="dbSizeBadge" class="stat">—</span>
+        <span id="tableCountBadge" class="stat">0 tables</span>
+        <span id="persistBadge" class="stat persist-ok" title="Persistence status">IndexedDB</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button id="btnSaveLayout" class="btn btn-ghost" title="Save pane layout">Save Layout</button>
+      <button id="btnAbout" class="btn btn-ghost">About Engine</button>
+      <button id="themeToggle" class="btn btn-ghost" aria-label="Toggle theme">◐ Theme</button>
+      <a href="https://github.com/Surekey78/MyVisuals" target="_blank" rel="noopener" class="btn btn-ghost">GitHub</a>
+    </div>
+  </header>
+
+  <!-- App layout -->
+  <div class="app-layout" id="appLayout">
+    <!-- Left Sidebar: Database Manager -->
+    <aside class="sidebar" id="sidebar" aria-label="Database manager">
+      <div class="sidebar-header">
+        <h2>Database Manager</h2>
+        <button id="btnCollapseSidebar" class="btn btn-icon" aria-label="Collapse sidebar">‹</button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="db-actions">
+          <button id="btnNewDB" class="btn btn-primary btn-block">+ New Database</button>
+          <button id="btnLoadSample" class="btn btn-secondary btn-block">Load Sample Database</button>
+          <div class="btn-row">
+            <label class="btn btn-ghost btn-small file-label">Import .sql<input type="file" id="importSqlFile" accept=".sql,.txt" hidden></label>
+            <label class="btn btn-ghost btn-small file-label">Import .db<input type="file" id="importDbFile" accept=".db,.sqlite,.sqlite3" hidden></label>
+          </div>
+          <div class="btn-row">
+            <button id="btnExportSql" class="btn btn-ghost btn-small" style="flex:1">Export SQL</button>
+            <button id="btnExportDb" class="btn btn-ghost btn-small" style="flex:1">Export .sqlite</button>
+          </div>
+          <button id="btnResetDB" class="btn btn-danger btn-small btn-block">Reset / Drop Everything</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-title">
+          <h3>Explorer</h3>
+          <div class="section-actions">
+            <button id="btnRefreshTree" class="btn btn-icon" title="Refresh">↻</button>
+            <input id="treeSearch" type="search" placeholder="Filter tables/columns" class="input input-small" aria-label="Filter tree">
+          </div>
+        </div>
+        <div id="dbTree" class="tree" role="tree" aria-label="Database tree">
+          <div class="empty-state small">No tables yet. Create one or load the sample DB.</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-title"><h3>Query History</h3>
+          <div class="section-actions">
+            <input id="historySearch" type="search" placeholder="Search history" class="input input-small">
+            <button id="btnClearHistory" class="btn btn-icon" title="Clear history">✕</button>
+          </div>
+        </div>
+        <div id="queryHistory" class="history-list"></div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-title"><h3>Saved Scripts</h3></div>
+        <div id="savedScripts" class="saved-list"></div>
+      </div>
+    </aside>
+
+    <div class="sidebar-resizer" id="sidebarResizer" aria-hidden="true"></div>
+
+    <!-- Main -->
+    <main id="main" class="main">
+      <!-- Tabs -->
+      <div class="tab-bar" role="tablist" aria-label="Main tabs">
+        <button class="tab active" role="tab" aria-selected="true" data-tab="sql">SQL Editor</button>
+        <button class="tab" role="tab" data-tab="app">App Code</button>
+        <button class="tab" role="tab" data-tab="schema">Schema</button>
+        <button class="tab" role="tab" data-tab="data">Data</button>
+        <button class="tab" role="tab" data-tab="learn">Learn</button>
+        <button class="tab" role="tab" data-tab="about">About</button>
+        <div class="tab-spacer"></div>
+        <div class="tab-actions">
+          <span class="hint">Ctrl+Enter run | Ctrl+Shift+Enter run all | Ctrl+/ comment</span>
+        </div>
+      </div>
+
+      <!-- SQL Editor Tab -->
+      <section id="panel-sql" class="tab-panel active" role="tabpanel" aria-labelledby="SQL Editor">
+        <div class="editor-toolbar">
+          <div class="toolbar-left">
+            <button id="btnRun" class="btn btn-primary" title="Ctrl+Enter">▶ Run</button>
+            <button id="btnRunAll" class="btn btn-secondary" title="Ctrl+Shift+Enter">Run All</button>
+            <button id="btnStop" class="btn btn-ghost">⏹ Stop</button>
+            <span class="sep"></span>
+            <button id="btnFormat" class="btn btn-ghost">Format SQL</button>
+            <button id="btnClearEditor" class="btn btn-ghost">Clear</button>
+            <select id="snippetSelect" class="input input-small" title="Insert snippet">
+              <option value="">Snippets…</option>
+            </select>
+          </div>
+          <div class="toolbar-right">
+            <button id="btnSaveScript" class="btn btn-ghost">Save Script</button>
+            <button id="btnLoadScript" class="btn btn-ghost">Load Script</button>
+            <span id="editorStatus" class="status-text">Ready</span>
+          </div>
+        </div>
+
+        <div class="editor-wrap" id="sqlEditorWrap">
+          <textarea id="sqlEditor" aria-label="SQL editor"></textarea>
+        </div>
+
+        <div id="compatPanel" class="compat-panel hidden" role="status" aria-live="polite">
+          <div class="compat-header">
+            <strong>🔄 MySQL → SQLite translation applied</strong>
+            <button id="btnDismissCompat" class="btn btn-icon">✕</button>
+          </div>
+          <div class="compat-grid">
+            <div>
+              <div class="compat-label">Your MySQL</div>
+              <pre id="compatOriginal" class="code-block small"></pre>
+            </div>
+            <div>
+              <div class="compat-label">Executed SQLite</div>
+              <pre id="compatTranslated" class="code-block small"></pre>
+            </div>
+          </div>
+          <p class="muted small">Your original text is preserved. Translation is shown for learning. SQLite executes the translated SQL.</p>
+        </div>
+
+        <div class="bottom-panel" id="resultsPanel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h3>Results</h3>
+              <span id="resultsMeta" class="muted small"></span>
+            </div>
+            <div class="panel-actions">
+              <button id="btnExplain" class="btn btn-ghost btn-small">Explain Query</button>
+              <button id="btnExportCsv" class="btn btn-ghost btn-small">Export CSV</button>
+              <button id="btnExportJson" class="btn btn-ghost btn-small">Export JSON</button>
+              <button id="btnCopyMarkdown" class="btn btn-ghost btn-small">Copy Markdown</button>
+              <button id="btnCopyInserts" class="btn btn-ghost btn-small">Copy INSERTs</button>
+            </div>
+          </div>
+
+          <div id="resultsTabs" class="results-tabs"></div>
+          <div id="resultsContent" class="results-content">
+            <div class="empty-state" id="resultsEmpty">
+              <div class="empty-icon">⟐</div>
+              <h4>No results yet</h4>
+              <p>Write SQL above and hit <kbd>Ctrl</kbd> + <kbd>Enter</kbd>. Try <code>SHOW TABLES;</code> or pick a snippet.</p>
+              <div class="empty-actions">
+                <button class="btn btn-primary" data-action="load-sample">Load Sample Shop DB</button>
+                <button class="btn btn-secondary" data-action="insert-demo">Run demo SELECT</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="explainPanel" class="explain-panel hidden">
+            <div class="explain-header">
+              <h4>Explain This Query</h4>
+              <button id="btnCloseExplain" class="btn btn-icon">✕</button>
+            </div>
+            <div id="explainContent"></div>
+            <div id="explainPlan" class="code-block small"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- App Code Tab -->
+      <section id="panel-app" class="tab-panel" role="tabpanel">
+        <div class="editor-toolbar">
+          <div class="toolbar-left">
+            <button id="btnRunApp" class="btn btn-primary">▶ Run App Code</button>
+            <button id="btnStopApp" class="btn btn-ghost">⏹ Stop</button>
+            <label class="latency-control">Network delay
+              <input type="range" id="latencySlider" min="0" max="800" value="0">
+              <span id="latencyVal">0 ms</span>
+            </label>
+          </div>
+          <div class="toolbar-right">
+            <button id="btnFormatApp" class="btn btn-ghost">Format JS</button>
+            <button id="btnInsertSampleApp" class="btn btn-ghost">Sample App</button>
+            <button id="btnClearApp" class="btn btn-ghost">Clear</button>
+          </div>
+        </div>
+
+        <div class="app-layout-inner">
+          <div class="editor-col">
+            <div class="editor-wrap" id="appEditorWrap">
+              <textarea id="appEditor" aria-label="App code editor"></textarea>
+            </div>
+            <div class="injection-lesson">
+              <h4>SQL Injection Lesson</h4>
+              <p class="small muted">Enter a name that contains an injection payload, then compare unsafe vs safe.</p>
+              <div class="injection-row">
+                <input id="injectionInput" class="input" value="' OR '1'='1" placeholder="Try: ' OR '1'='1">
+                <button id="btnUnsafe" class="btn btn-danger btn-small">Run unsafe (concat)</button>
+                <button id="btnSafe" class="btn btn-primary btn-small">Run safe (prepared)</button>
+              </div>
+              <div id="injectionResult" class="code-block small muted">No injection test yet.</div>
+            </div>
+          </div>
+          <div class="console-col">
+            <div class="panel-header">
+              <h3>Console Output</h3>
+              <button id="btnClearConsole" class="btn btn-icon" title="Clear console">✕</button>
+            </div>
+            <div id="appConsole" class="console" role="log" aria-live="polite"></div>
+            <div class="reference-snippets">
+              <div class="snippet-tabs" role="tablist">
+                <button class="snippet-tab active" data-lang="node">Node.js</button>
+                <button class="snippet-tab" data-lang="php">PHP PDO</button>
+                <button class="snippet-tab" data-lang="python">Python</button>
+                <button class="snippet-tab" data-lang="java">Java JDBC</button>
+                <button class="snippet-tab" data-lang="go">Go</button>
+              </div>
+              <div id="snippetContent" class="snippet-content">
+                <pre class="code-block small" id="snippetCode"></pre>
+                <button id="btnCopySnippet" class="btn btn-ghost btn-small">Copy snippet</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Schema Tab -->
+      <section id="panel-schema" class="tab-panel" role="tabpanel">
+        <div class="panel-header">
+          <div class="panel-title"><h3>Live Schema Visualizer</h3> <span class="muted small" id="schemaMeta"></span></div>
+          <div class="panel-actions">
+            <button id="btnAutoLayout" class="btn btn-ghost btn-small">Auto-Layout</button>
+            <button id="btnFitSchema" class="btn btn-ghost btn-small">Fit to Screen</button>
+            <button id="btnZoomIn" class="btn btn-icon" title="Zoom in">+</button>
+            <button id="btnZoomOut" class="btn btn-icon" title="Zoom out">−</button>
+            <button id="btnResetZoom" class="btn btn-ghost btn-small">Reset</button>
+            <label class="check small"><input type="checkbox" id="toggleGrid" checked> Grid</label>
+            <label class="check small"><input type="checkbox" id="toggleLabels" checked> Labels</label>
+            <input id="schemaSearch" type="search" placeholder="Search table/column" class="input input-small">
+          </div>
+        </div>
+        <div id="schemaCanvas" class="schema-canvas">
+          <svg id="schemaSvg" class="schema-svg" aria-hidden="true"></svg>
+          <div id="schemaCards" class="schema-cards"></div>
+          <div id="schemaEmpty" class="empty-state">
+            <div class="empty-icon">⬡</div>
+            <h4>No schema yet</h4>
+            <p>Create tables or load the sample database to see the ER diagram.</p>
+          </div>
+        </div>
+        <div id="schemaInspector" class="inspector hidden">
+          <div class="inspector-header">
+            <h4 id="inspectorTitle">Table</h4>
+            <button id="btnCloseInspector" class="btn btn-icon">✕</button>
+          </div>
+          <div id="inspectorContent"></div>
+          <div class="inspector-actions">
+            <button id="btnInspectorSelect" class="btn btn-ghost btn-small">SELECT *</button>
+            <button id="btnInspectorInsert" class="btn btn-ghost btn-small">Insert sample</button>
+            <button id="btnInspectorDrop" class="btn btn-danger btn-small">Drop table</button>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="icon pk">🔑</i> Primary Key</span>
+          <span><i class="icon fk">↗</i> Foreign Key</span>
+          <span><i class="icon uniq">◆</i> Unique</span>
+          <span><i class="icon nn">●</i> NOT NULL</span>
+          <span><i class="icon idx">▤</i> Indexed</span>
+          <span class="line-legend"><span class="line-sample"></span> 1 : N relationship</span>
+        </div>
+      </section>
+
+      <!-- Data Tab -->
+      <section id="panel-data" class="tab-panel" role="tabpanel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <h3>Data Browser</h3>
+            <select id="dataTableSelect" class="input input-small"></select>
+            <span id="dataRowCount" class="muted small"></span>
+          </div>
+          <div class="panel-actions">
+            <button id="btnDataRefresh" class="btn btn-ghost btn-small">Refresh</button>
+            <button id="btnAddRow" class="btn btn-primary btn-small">Add Row</button>
+            <button id="btnDeleteRow" class="btn btn-ghost btn-small">Delete Selected</button>
+          </div>
+        </div>
+        <div id="dataGridWrap" class="results-content">
+          <div class="empty-state"><p>Select a table to browse data. Double-click a cell to edit.</p></div>
+        </div>
+        <p class="muted small" style="padding:8px">Tip: Editing a cell generates a real <code>UPDATE</code>. Adding/deleting rows generates <code>INSERT</code>/<code>DELETE</code>. Check Results → history.</p>
+      </section>
+
+      <!-- Learn Tab -->
+      <section id="panel-learn" class="tab-panel" role="tabpanel">
+        <div class="learn-layout">
+          <div class="learn-sidebar">
+            <h3>Guided Lessons</h3>
+            <div class="progress-wrap">
+              <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+              <span id="progressText" class="small muted">0 / 13 completed</span>
+            </div>
+            <nav id="lessonList" class="lesson-list" aria-label="Lessons"></nav>
+            <h3 style="margin-top:16px">Challenges</h3>
+            <div id="challengeList" class="lesson-list"></div>
+          </div>
+          <div class="learn-content">
+            <article id="lessonContent" class="lesson-article">
+              <div class="empty-state">
+                <h4>Learn SQL by doing</h4>
+                <p>Pick a lesson on the left. Each lesson loads runnable SQL into the editor.</p>
+              </div>
+            </article>
+            <div id="quizArea" class="quiz-area hidden"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- About Tab -->
+      <section id="panel-about" class="tab-panel" role="tabpanel">
+        <div class="about-grid">
+          <div class="card">
+            <h3>About the Engine — Honest Technical Notes</h3>
+            <p><strong>Real execution:</strong> Every statement you run is executed for real by <code>SQLite 3.x</code> compiled to WebAssembly via <code>sql.js</code> inside your browser. There is no server and no network round-trip.</p>
+            <p><strong>MySQL compatibility:</strong> Your MySQL syntax is translated to SQLite before execution. The <em>Compatibility notes</em> panel shows both versions. We never pretend a MySQL server is running.</p>
+            <p><strong>Persistence:</strong> After each successful write we export the SQLite binary with <code>db.export()</code> and store it in <code>IndexedDB</code>. On reload we restore it. If IndexedDB is blocked, we fallback to <code>localStorage</code> (base64). Export/Import is always available.</p>
+            <ul class="small">
+              <li><strong>Foreign keys:</strong> Enforced via <code>PRAGMA foreign_keys = ON</code> at startup. Invalid FK inserts fail with a real error.</li>
+              <li><strong>Multiple databases / USE:</strong> Emulated as a logical namespace. <code>SHOW DATABASES</code> returns configured names; <code>USE db</code> sets a prefix. No real ATTACH is needed for the demo, but the layer documents the limitation.</li>
+              <li><strong>Limitations vs MySQL:</strong>
+                <ul>
+                  <li>Strict typing: SQLite is dynamically typed; types are affinities.</li>
+                  <li>No stored procedures / triggers (limited), no users/GRANTS/permissions.</li>
+                  <li>Some functions differ: we polyfill <code>NOW()</code>, <code>IFNULL</code>, <code>CONCAT</code>, <code>DATE_FORMAT</code> subset, <code>YEAR/MONTH</code>.</li>
+                  <li>AUTO_INCREMENT mapped to <code>AUTOINCREMENT</code> with <code>INTEGER PRIMARY KEY</code>.</li>
+                  <li>ENUM becomes <code>TEXT</code> + <code>CHECK</code>.</li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>How to Run Locally</h3>
+            <p><strong>Why a static server is required:</strong> Browsers block <code>fetch</code> for <code>.wasm</code> when opening <code>file://</code> due to CORS and MIME rules. sql.js loads <code>sql-wasm.wasm</code> via fetch; it will fail on <code>file://</code>.</p>
+            <p>Serve the folder over HTTP. Any static server works. Pick one:</p>
+            <pre class="code-block small">npx serve .
+# or
+python3 -m http.server 8080
+# or
+php -S localhost:8080
+# or
+npx http-server -p 8080</pre>
+            <p>Then open <code>http://localhost:8080</code> (or the printed URL). No build step.</p>
+            <p class="small muted">Browser requirements: modern evergreen with WebAssembly, IndexedDB, ES modules (Chrome 90+, Firefox 90+, Safari 15+, Edge 90+).</p>
+            <h3>Architecture — engine → driver → UI</h3>
+            <pre class="code-block small">sql.js (WASM SQLite)
+  ↑  engine.js  — single DB, exec/run/introspect/persist, MySQL→SQLite translation, PRAGMA FK ON
+  ↑  driver.js  — fake mysql2/promise pool/connection, ? binding, [rows,fields], latency slider
+  ↑  app.js     — central state, wiring, persistence (IndexedDB/localStorage)
+  ↑  schema.js  — introspection → draggable cards + SVG lines
+  ↑  ui.js      — CodeMirror editors, tabs, results grid, toasts, history, lessons</pre>
+            <h3>Files</h3>
+            <ul class="small">
+              <li><code>index.html</code> — layout, CDN links, tab panels</li>
+              <li><code>styles.css</code> — dark/light via CSS vars, IDE layout, grids, responsive</li>
+              <li><code>js/engine.js</code> — sql.js bootstrap + MySQL compat layer</li>
+              <li><code>js/driver.js</code> — mysql2 shim</li>
+              <li><code>js/schema.js</code> — introspection + diagram</li>
+              <li><code>js/ui.js</code> — editors, results, console, toasts</li>
+              <li><code>js/app.js</code> — state + glue</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Supported vs Unsupported SQL</h3>
+            <table class="mini-table">
+              <thead><tr><th>Feature</th><th>Support</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>CREATE TABLE / IF NOT EXISTS / DROP / ALTER</td><td>✅</td><td>FK, PK, UNIQUE, CHECK, DEFAULT, FK CASCADE</td></tr>
+                <tr><td>CREATE INDEX / UNIQUE / DROP INDEX</td><td>✅</td><td></td></tr>
+                <tr><td>CREATE VIEW / DROP VIEW</td><td>✅</td><td></td></tr>
+                <tr><td>INSERT multi-row / INSERT SELECT</td><td>✅</td><td></td></tr>
+                <tr><td>REPLACE / ON DUPLICATE KEY UPDATE</td><td>✅</td><td>Translated to ON CONFLICT</td></tr>
+                <tr><td>UPDATE / DELETE</td><td>✅</td><td></td></tr>
+                <tr><td>SELECT WHERE DISTINCT ORDER BY LIMIT/OFFSET GROUP BY HAVING JOIN UNION</td><td>✅</td><td>INNER/LEFT/CROSS, self-join, subqueries</td></tr>
+                <tr><td>Aggregates, window funcs</td><td>✅</td><td>Where SQLite supports</td></tr>
+                <tr><td>CASE WHEN, EXISTS, IN, BETWEEN, LIKE</td><td>✅</td><td></td></tr>
+                <tr><td>Transactions BEGIN/COMMIT/ROLLBACK/SAVEPOINT</td><td>✅</td><td></td></tr>
+                <tr><td>SHOW / DESCRIBE / USE</td><td>✅ (emulated)</td><td>Via sqlite_master + PRAGMA</td></tr>
+                <tr><td>EXPLAIN QUERY PLAN</td><td>✅</td><td>Readable rendering + index tip</td></tr>
+                <tr><td>Stored procedures, users, GRANTS</td><td>❌</td><td>Not in SQLite</td></tr>
+                <tr><td>Triggers (CREATE TRIGGER)</td><td>⚠️ limited</td><td>SQLite supports basic</td></tr>
+              </tbody>
+            </table>
+            <h4>MySQL → SQLite translation rules</h4>
+            <ul class="small">
+              <li><code>AUTO_INCREMENT</code> → <code>AUTOINCREMENT</code> + force <code>INTEGER PRIMARY KEY</code></li>
+              <li>Strip <code>ENGINE=InnoDB</code>, <code>DEFAULT CHARSET=…</code>, <code>COLLATE=…</code></li>
+              <li>Backticks <code>`id`</code> → <code>"id"</code></li>
+              <li>Types: INT→INTEGER, VARCHAR→TEXT, DECIMAL/FLOAT→REAL, DATETIME→TEXT, BOOLEAN→INTEGER, ENUM→TEXT+CHECK</li>
+              <li><code>NOW()/CURRENT_TIMESTAMP</code> → <code>datetime('now')</code></li>
+              <li><code>CONCAT(a,b)</code> → <code>(a || b)</code>, <code>IFNULL</code> kept, <code>YEAR()</code> → <code>strftime</code></li>
+              <li><code>LIMIT x, y</code> → <code>LIMIT y OFFSET x</code></li>
+              <li><code>ON DUPLICATE KEY UPDATE</code> → <code>ON CONFLICT DO UPDATE SET</code></li>
+              <li>SHOW/DESCRIBE rewritten to sqlite_master/PRAGMA queries</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>10 Example SQL Snippets</h3>
+            <ol class="small">
+              <li><code>SHOW TABLES;</code></li>
+              <li><code>SELECT c.name, COUNT(o.id) FROM customers c LEFT JOIN orders o ON o.customer_id=c.id GROUP BY c.id;</code></li>
+              <li><code>INSERT INTO customers (name,email) VALUES ('Ada Lovelace','ada@example.com'), ('Grace Hopper','grace@example.com');</code></li>
+              <li><code>SELECT * FROM products WHERE price BETWEEN 20 AND 100 ORDER BY price DESC LIMIT 5;</code></li>
+              <li><code>SELECT status, SUM(total) FROM orders GROUP BY status HAVING SUM(total) &gt; 100;</code></li>
+              <li><code>SELECT * FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE email LIKE '%@example.com');</code></li>
+              <li><code>UPDATE products SET stock = stock -1 WHERE id=1; SELECT * FROM products WHERE id=1;</code></li>
+              <li><code>BEGIN; INSERT INTO orders (customer_id,total,status) VALUES (1,99.9,'paid'); ROLLBACK; SELECT * FROM orders;</code></li>
+              <li><code>EXPLAIN QUERY PLAN SELECT * FROM orders WHERE customer_id=1;</code></li>
+              <li><code>DESCRIBE customers; SHOW CREATE TABLE orders;</code></li>
+            </ol>
+            <h3>3 App-Code Snippets (run in App Code tab)</h3>
+            <p class="small muted">Each snippet uses the fake mysql2 driver over the same DB.</p>
+            <pre class="code-block small">// 1 — Transactional insert
+const conn = await pool.getConnection();
+try{
+  await conn.beginTransaction();
+  const [r] = await conn.execute('INSERT INTO customers (name,email) VALUES (?,?)',['Ada','ada@example.com']);
+  await conn.execute('INSERT INTO orders (customer_id,total,status) VALUES (?,?,?)',[r.insertId,149.99,'paid']);
+  await conn.commit(); console.log('committed', r.insertId);
+}catch(e){ await conn.rollback(); console.error(e.message);} finally{ conn.release();}</pre>
+            <pre class="code-block small">// 2 — Prepared SELECT
+const [rows] = await pool.query('SELECT c.name, o.total FROM customers c JOIN orders o ON o.customer_id=c.id WHERE o.status=?',['paid']);
+console.table(rows);</pre>
+            <pre class="code-block small">// 3 — Error handling (FK violation)
+try{
+  await pool.query('INSERT INTO orders (customer_id,total) VALUES (?,?)',[9999, 10]);
+}catch(e){
+  console.error(e.code, e.sqlMessage);
+}</pre>
+          </div>
+          <div class="card">
+            <h3>Sample Database Script</h3>
+            <details><summary>Show full sample SQL (e-commerce, ~50 rows)</summary><pre class="code-block small" id="sampleSqlBlock"></pre></details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="main-resizer" id="mainResizer" aria-hidden="true"></div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <!-- Modals -->
+  <dialog id="confirmDialog" class="dialog">
+    <form method="dialog">
+      <h3 id="confirmTitle">Confirm</h3>
+      <p id="confirmMessage"></p>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn btn-ghost">Cancel</button>
+        <button value="confirm" class="btn btn-danger">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="saveScriptDialog" class="dialog">
+    <form method="dialog" id="saveScriptForm">
+      <h3>Save Script</h3>
+      <label>Name <input id="saveScriptName" class="input" placeholder="my-query"></label>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn btn-ghost">Cancel</button>
+        <button value="confirm" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/sql/sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/comment/comment.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/hint/show-hint.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/hint/sql-hint.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/selection/active-line.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/display/placeholder.min.js"></script>
+
+  <!-- App modules -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
